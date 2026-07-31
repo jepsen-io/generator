@@ -8,7 +8,7 @@ This library provides the compositional generator system at the heart of
 
 Generators produce a series of operations Jepsen would like to perform against
 a system, like "Set key `x` to 3". They also react to operations as they
-happen. For example, if the write fails, the generator could decide to retry
+happen. For example, if a write fails, the generator could decide to retry
 it.
 
 In addition to the generators themselves, this library provides:
@@ -18,6 +18,23 @@ In addition to the generators themselves, this library provides:
 - `jepsen.generator.context`: A high-performance, pure data structure which
   keeps track of the state used by generators
 - `jepsen.generator.translation-table`: Maps worker threads to integers
+
+## Example
+
+```clj
+(gen/phases (->> (gen/mix [(repeat {:f :read})
+                           (map (fn [x] {:f :write, :value x}) (range))])
+                 (gen/stagger 1/10)
+                 (gen/nemesis (->> (cycle [{:f :break}
+                                           {:f :repair}])
+                                   (gen/stagger 5)))
+                 (gen/time-limit 30))
+            (gen/log "Recovering")
+            (gen/nemesis {:f :repair})
+            (gen/sleep 10)
+            (gen/log "Final read")
+            (gen/clients (gen/each-thread (gen/until-ok {:f :read}))))
+```
 
 ## License
 
