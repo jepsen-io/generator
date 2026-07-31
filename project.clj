@@ -1,4 +1,4 @@
-(defproject io.jepsen/generator "0.1.3-SNAPSHOT"
+(defproject io.jepsen/generator "0.1.3"
   :description "Pure functional generators for Jepsen tests"
   :url "https://github.com/jepsen-io/generator"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
