@@ -1255,6 +1255,49 @@
       (Reserve. ranges all-ranges context-filters
                 (c/update gens i update test ctx event)))))
 
+; Reserve needs to see the context map in order to know which processes go
+; where. This generator lazily becomes a Reserve on its first invocation.
+(defrecord PreReserve
+  [n+gens   ; A vector of [thread-count gen] tuples
+   default] ; The default generator
+  Generator
+  (op [this test ctx]
+    (op (update this test ctx nil)
+        test ctx))
+
+  ; We use update for both update and op, just to simplify the code.
+  (update [_ test ctx op]
+    (let [; What threads are available?
+          threads (->> (context/all-threads ctx)
+                       (group-by type) ; So numbers live together
+                       vals
+                       (mapcat sort))
+          ; Are there enough threads to run this?
+          _ (assert (<= (reduce + 0 (c/map first n+gens))
+                        (count threads)))
+          ; Construct [thread-set gen] tuples defining the threads that map to
+          ; each generator.
+          gens
+          (loopr [gens []
+                  threads threads]
+                 [[n gen] n+gens]
+                 (recur (conj gens [(set (take n threads)) gen])
+                        (drop n threads))
+                 gens)
+          ranges      (mapv first gens)
+          all-ranges  (reduce set/union ranges)
+          ; Compute context filters for all ranges
+          context-filters (mapv context/make-thread-filter
+                                (c/concat ranges
+                                          [(complement all-ranges)]))
+          gens        (mapv second gens)
+          gens        (conj gens default)
+          ; Build the reserve we're going to become
+          reserve (Reserve. ranges all-ranges context-filters gens)]
+      (if (nil? op)
+        reserve
+        (update reserve test ctx op)))))
+
 (defn reserve
   "Takes a series of count, generator pairs, and a final default generator.
 
@@ -1271,31 +1314,13 @@
   will execute that particular generator. Updates from a thread are propagated
   only to the generator which that thread executes."
   [& args]
-  (let [gens (->> args
-                  drop-last
-                  (partition 2)
-                  ; Construct [thread-set gen] tuples defining the range of
-                  ; thread indices covering a given generator, lower
-                  ; inclusive, upper exclusive. TODO: I think there might be a
-                  ; bug here: if we construct nested reserves or otherwise
-                  ; restrict threads, an inner reserve might not understand
-                  ; that its threads don't start at 0.
-                  (reduce (fn [[n gens] [thread-count gen]]
-                            (let [n' (+ n thread-count)]
-                              [n' (conj gens [(set (range n n')) gen])]))
-                          [0 []])
-                  second)
-        ranges      (mapv first gens)
-        all-ranges  (reduce set/union ranges)
-        ; Compute context filters for all ranges
-        context-filters (mapv context/make-thread-filter
-                              (c/concat ranges
-                                      [(complement all-ranges)]))
-        gens        (mapv second gens)
-        default     (last args)
-        gens        (conj gens default)]
+  (let [n+gens (->> args
+                    drop-last
+                    (partition 2)
+                    vec)
+        default (last args)]
     (assert default)
-    (Reserve. ranges all-ranges context-filters gens)))
+    (PreReserve. n+gens default)))
 
 (declare nemesis)
 
