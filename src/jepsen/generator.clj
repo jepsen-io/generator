@@ -1272,8 +1272,8 @@
                        (group-by type) ; So numbers live together
                        vals
                        (mapcat sort))
-          ; Are there enough threads to run this?
-          _ (assert (<= (reduce + 0 (c/map first n+gens))
+          ; Are there enough threads to run all generators?
+          _ (assert (<= (reduce + 1 (c/map first n+gens))
                         (count threads)))
           ; Construct [thread-set gen] tuples defining the threads that map to
           ; each generator.
