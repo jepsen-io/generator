@@ -376,7 +376,8 @@
   sequences, phases, etc., and they'll be evaluated only once prior ops have
   been consumed."
   (:refer-clojure :exclude [await concat cycle delay filter map repeat run! update])
-  (:require [clojure [core :as c]
+  (:require [bifurcan-clj [core :as b]]
+            [clojure [core :as c]
                      [datafy :refer [datafy]]
                      [set :as set]]
             [clojure.core.reducers :as r]
@@ -1469,18 +1470,44 @@
    (when (and gen (pos? limit))
      (Cycle. limit gen gen))))
 
-(defrecord ProcessLimit [n procs gen]
+(defrecord ProcessLimit [; Our concurrency limit
+                         n
+                         ; We filter the context to at most n processes using
+                         ; this lazily initialized thread filter. This means
+                         ; that if we're offered 10 threads, but we try to use
+                         ; concurrency-limit 5, we don't immediately exit.
+                         thread-filter
+                         ; The set of all processes a (filtered) context has
+                         ; ever offered us
+                         procs
+                         ; The underlying generator
+                         gen
+                         ]
   Generator
   (op [_ test ctx]
-    (when-let [[op gen'] (op gen test ctx)]
-      (if (= :pending op)
-        [op (ProcessLimit. n procs gen')]
-        (let [procs' (into procs (all-processes ctx))]
-          (when (<= (count procs') n)
-            [op (ProcessLimit. n procs' gen')])))))
+    (let [; Laziliy initialize thread filter
+          thread-filter
+          (or thread-filter
+              (let [threads (context/all-threads ctx)]
+                (if (< n (b/size threads))
+                  ; We have too many threads!
+                  (context/make-thread-filter
+                    (set (take n threads))
+                    ctx)
+                  ; This is fine
+                  identity)))
+          ctx (thread-filter ctx)]
+      (when-let [[op gen'] (op gen test ctx)]
+        (if (= :pending op)
+          [op (ProcessLimit. n thread-filter procs gen')]
+          (let [procs' (into procs (all-processes ctx))]
+            (when (<= (count procs') n)
+              [op (ProcessLimit. n thread-filter procs' gen')]))))))
 
   (update [_ test ctx event]
-    (ProcessLimit. n procs (update gen test ctx event))))
+    (assert thread-filter)
+    (let [ctx (thread-filter ctx)]
+      (ProcessLimit. n thread-filter procs (update gen test ctx event)))))
 
 (defn process-limit
   "Takes a generator and returns a generator with bounded concurrency--it emits
@@ -1492,10 +1519,13 @@
   `n`. Tracking the union of all *possible* processes, rather than just those
   processes actually performing operations, prevents the generator from
   \"trickling\" at the end of a test, i.e. letting only one or two processes
-  continue to perform ops, rather than the full concurrency of the test."
+  continue to perform ops, rather than the full concurrency of the test.
+
+  If n is smaller than the number of threads in the context, this generator
+  picks n threads from it, and uses them throughout."
   [n gen]
   (when (and (pos? n) gen)
-    (ProcessLimit. n #{} gen)))
+    (ProcessLimit. n nil #{} gen)))
 
 (defrecord ConcurrencyLimit [n gen]
   Generator

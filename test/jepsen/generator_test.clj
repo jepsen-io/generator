@@ -437,7 +437,16 @@
               (gen/process-limit 5)
               gen/clients
               gen.test/perfect-info
-              (map (juxt :process :value))))))
+              (map (juxt :process :value)))))
+
+  (testing "should still work when the context starts with more threads than the limit"
+    (is (= [[0 0]]
+           (->> (range)
+                (map (fn [x] {:value x}))
+                (gen/process-limit 1)
+                gen/clients
+                gen.test/perfect-info
+                (map (juxt :process :value)))))))
 
 (deftest concurrency-limit-test
   (testing "nil passthrough"
