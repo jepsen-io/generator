@@ -316,8 +316,8 @@
   ; Any, they can interleave.
   (is (= [[:a 0 0]
           [:b 1 0]
-          [:b 1 20]
-          [:a 0 20]]
+          [:a 0 20]
+          [:b 1 20]]
          (->> (gen/any (gen/on #{0} (gen/delay 20e-9 (repeat {:f :a})))
                        (gen/on #{1} (gen/delay 20e-9 (repeat {:f :b}))))
               (gen/limit 4)
@@ -330,7 +330,6 @@
   ; Any, they can interleave--and end as soon as one does.
   (is (= [[:a 0 0]
           [:b 1 0]
-          [:b 1 20]
           [:a 0 20]]
          (->> (gen/shortest-any
                 (gen/limit 2 (gen/on #{0} (gen/delay 20e-9 (repeat {:f :a}))))
@@ -646,8 +645,8 @@
 (deftest single-threaded-test
   (is (= [[:w :invoke]
           [:w :ok]
-          [:r :invoke]
-          [:r :ok]
+          [:w :invoke]
+          [:w :ok]
           [:r :invoke]
           [:r :ok]]
          (->> (gen/any (gen/repeat {:f :w})

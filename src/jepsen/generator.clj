@@ -100,8 +100,8 @@
   - Functions return generators, not just operations, which makes it easier to
     express sequences of operations like 'pick the current leader, isolate it,
     then kill that same node, then restart that node.' Use `#(gen/once {:f
-    :write, :value (rand-int 5))` instead of `(fn [] {:f :write, :value
-    (rand-int 5)})`.
+    :write, :value (rand/long 5))` instead of `(fn [] {:f :write, :value
+    (rand/long 5)})`.
 
   - `stagger`, `delay`, etc. now take total rates, rather than the rate per
     thread.
@@ -126,7 +126,7 @@
       - (map (fn [x] {:f :write, :value x}) (range)) produces a series of
         distinct, monotonically increasing writes
 
-      - (fn [] {:f :inc, :value (rand-nth 5)}) produces a series of random
+      - (fn [] {:f :inc, :value (rand/long 5)}) produces a series of random
         increments, rather than a series where every value is the *same*
         (randomly selected) value.
 
@@ -172,17 +172,17 @@
 
   Perform a series of random writes:
 
-    (fn [] {:f :write, :value (rand-int 5))
+    (fn [] {:f :write, :value (rand/long 5))
 
   Perform 10 random writes. This is regular clojure.core/repeat:
 
-    (repeat 10 (fn [] {:f :write, :value (rand-int 5)))
+    (repeat 10 (fn [] {:f :write, :value (rand/long 5)))
 
   Perform a sequence of 50 unique writes. We use regular Clojure sequence
   functions here:
 
     (->> (range)
-         (map (fn [x] {:f :write, :value (rand-int 5)}))
+         (map (fn [x] {:f :write, :value (rand/long 5)}))
          (take 50))
 
   Write 3, then (possibly concurrently) read:
@@ -364,10 +364,10 @@
   called again to produce a new generator. For instance:
 
     ; Produces a series of different random writes, e.g. 1, 5, 2, 3...
-    (fn [] {:f :write, :value (rand-int 5)})
+    (fn [] {:f :write, :value (rand/long 5)})
 
     ; Alternating write/read ops, e.g. write 2, read, write 5, read, ...
-    (fn [] (map gen/once [{:f :write, :value (rand-int 5)}
+    (fn [] (map gen/once [{:f :write, :value (rand/long 5)}
                           {:f :read}]))
 
   Promises and delays are generators which ignore updates, yield :pending until
@@ -385,7 +385,8 @@
             [clojure.pprint :as pprint :refer [pprint]]
             [dom-top.core :refer [loopr]]
             [fipp.ednize :as fipp.ednize]
-            [jepsen [history :as history]]
+            [jepsen [history :as history]
+                    [random :as rand]]
             [jepsen.generator.context :as context]
             [potemkin :refer [import-vars]]
             [slingshot.slingshot :refer [try+ throw+]])
@@ -493,16 +494,16 @@
 
 (defn rand-int-seq
   "Generates a reproducible sequence of random longs, given a random seed. If
-  seed is not provided, taken from (rand-int))."
-  ([] (rand-int-seq (rand-int Integer/MAX_VALUE)))
+  seed is not provided, taken from (jepsen.random/long))."
+  ([] (rand-int-seq (rand/long Integer/MAX_VALUE)))
   ([seed]
    (let [gen (java.util.Random. seed)]
      (repeatedly #(.nextLong gen)))))
 
 (defn rand-seq
   "Generates a reproducible sequence of random doubles, given a random seed. If
-  seed is not provided, taken from (rand-int)"
-  ([] (rand-seq (rand-int Integer/MAX_VALUE)))
+  seed is not provided, taken from (jepsen.random/long)"
+  ([] (rand-seq (rand/long)))
   ([seed]
    (let [gen (java.util.Random. seed)]
      (repeatedly #(.nextDouble gen)))))
@@ -997,7 +998,7 @@
              (let [w1 (:weight m1 1)
                    w2 (:weight m2 1)
                    w  (+ w1 w2)]
-               (assoc (if (< (rand-int w) w1) m1 m2)
+               (assoc (if (< (rand/long w) w1) m1 m2)
                       :weight w))
              ; Not equal times; which comes sooner?
              (if (< t1 t2)
@@ -1357,10 +1358,12 @@
     (when-not (= 0 (count gens))
       (if-let [[op gen'] (op (nth gens i) test ctx)]
         ; Good, we have an op
-        [op (Mix. (rand-int (count gens)) (assoc gens i gen'))]
+        [op (Mix. (rand/long (count gens)) (assoc gens i gen'))]
         ; Oh, we're out of ops on this generator. Compact and recur.
-        (op (Mix. (rand-int (dec (count gens))) (dissoc-vec gens i))
-            test ctx))))
+        (when (< 1 (count gens))
+          ; If we'd run out of generators, we're done
+          (op (Mix. (rand/long (dec (count gens))) (dissoc-vec gens i))
+              test ctx)))))
 
   (update [this test ctx event]
     this))
@@ -1381,7 +1384,7 @@
   [gens]
   (let [gens (vec (remove nil? gens))]
     (when (seq gens)
-      (Mix. (rand-int (count gens)) gens))))
+      (Mix. (rand/long (count gens)) gens))))
 
 (defrecord Limit [remaining gen]
   Generator
@@ -1587,12 +1590,12 @@
 
               ; We're ready to issue this operation.
               (<= next-time (:time op))
-              [op (Stagger. dt (+ (:time op) (long (rand dt))) gen')]
+              [op (Stagger. dt (+ (:time op) (rand/long dt)) gen')]
 
               ; Not ready yet
               true
               [(assoc op :time next-time)
-               (Stagger. dt (+ next-time (long (rand dt))) gen')]))))
+               (Stagger. dt (+ next-time (rand/long dt)) gen')]))))
 
   (update [_ test ctx event]
     (Stagger. dt next-time (update gen test ctx event))))

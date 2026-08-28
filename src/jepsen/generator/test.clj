@@ -9,7 +9,8 @@
   (:require [clojure.datafy :refer [datafy]]
             [dom-top.core :refer [assert+]]
             [jepsen [generator :as gen]
-                    [history :as history]]
+                    [history :as history]
+                    [random :as rand]]
             [jepsen.generator.context :as ctx])
   (:import (io.lacuna.bifurcan Set)))
 
@@ -33,8 +34,9 @@
   (filter #(= :invoke (:type %)) history))
 
 (defmacro with-fixed-rands
-  "Rebinds rand, rand-int, and rand-nth to yield a deterministic series of
-  random values. Definitely not threadsafe, but fine for tests I think."
+  "Rebinds jepsen.random and clojure's rand, rand-int, and rand-nth to yield a
+  deterministic series of random values. Definitely not threadsafe, but fine
+  for tests I think."
   [seed & body]
   `(let [rand-values#     (atom (gen/rand-seq ~seed))
          rand-int-values# (atom (gen/rand-int-seq ~seed))
@@ -50,10 +52,11 @@
                              limit#)))
          rand-nth#   (fn ~'rand-nth [coll#]
                        (nth coll# (rand-int# (count coll#))))]
-     (with-redefs [rand     rand#
-                   rand-int rand-int#
-                   rand-nth rand-nth]
-       ~@body)))
+     (rand/with-seed ~seed
+       (with-redefs [rand     rand#
+                     rand-int rand-int#
+                     rand-nth rand-nth]
+         ~@body))))
 
 (def rand-seed
   "We need tests to be deterministic for reproducibility, but also
