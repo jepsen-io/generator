@@ -570,8 +570,8 @@
   ; We want to make sure that when mixing two different staggers together using
   ; any, no stagger gets starved.
   (let [n 1000
-        h (->> (gen/any (gen/stagger 3 (repeat {:f :a}))
-                        (gen/stagger 5 (repeat {:f :b})))
+        h (->> (gen/any (gen/stagger 0.3 (repeat {:f :a}))
+                        (gen/stagger 0.5 (repeat {:f :b})))
                (gen/limit n)
                gen/clients
                gen.test/perfect)
@@ -588,8 +588,8 @@
                              nanos->secs))
         ]
     (is (= n (count h)))
-    (is (< 2.5 (mean-interval as) 3.5))
-    (is (< 4.5 (mean-interval bs) 5.5))))
+    (is (= 0.3147475223489499 (mean-interval as)))
+    (is (= 0.5105991289287599 (mean-interval bs)))))
 
 (deftest cycle-test
   (testing "nil passthrough"

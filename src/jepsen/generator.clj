@@ -1578,7 +1578,7 @@
   (when (and gen (pos? dt))
     (TimeLimit. (secs->nanos dt) nil gen)))
 
-(defrecord Stagger [dt next-time gen]
+(defrecord Stagger [dt-fn next-time gen]
   Generator
   (op [this test ctx]
     (when-let [[op gen'] (op gen test ctx)]
@@ -1590,33 +1590,52 @@
 
               ; We're ready to issue this operation.
               (<= next-time (:time op))
-              [op (Stagger. dt (+ (:time op) (rand/long dt)) gen')]
+              [op (Stagger. dt-fn (+ (:time op) (dt-fn)) gen')]
 
               ; Not ready yet
               true
               [(assoc op :time next-time)
-               (Stagger. dt (+ next-time (rand/long dt)) gen')]))))
+               (Stagger. dt-fn (+ next-time (dt-fn)) gen')]))))
 
   (update [_ test ctx event]
-    (Stagger. dt next-time (update gen test ctx event))))
+    (Stagger. dt-fn next-time (update gen test ctx event))))
 
-(defn stagger
-  "Wraps a generator. Operations from that generator are scheduled at uniformly
-  random intervals between 0 to 2 * (dt seconds).
+(defn stagger-nanos
+  "Wraps a generator. Operations from that generator are scheduled at random
+  intervals given by `(dt)`, which should return a primitive long number of
+  nanoseconds to wait before the next operation."
+  [dt-fn gen]
+  (Stagger. dt-fn nil gen))
 
-  Unlike Jepsen's original version of `stagger`, this actually *means*
-  'schedule at roughly every dt seconds', rather than 'introduce roughly dt
-  seconds of latency between ops', which makes this less sensitive to request
-  latency variations.
+(defn stagger-exp
+  "Wraps a generator. Operations from that generator are scheduled at random
+  intervals (exponentially distributed) with a mean rate of approximately
+  `1/dt` seconds, or with delays of `(dt)` seconds if `dt` is a function.
+  Delays are at most `max-dt` seconds. If no `max-dt` is given, the maximum
+  delay is 100 seconds. A `nil` max-dt indicates no bound."
+  ([dt gen]
+   (stagger-exp dt 100 gen))
+  ([dt max-dt gen]
+   (when gen
+     (Stagger.
+       (cond (number? dt)
+             ; Mean for exponential distributions is 1/lambda
+             (let [lambda (double dt)]
+               (fn dt-fn []
+                 (secs->nanos
+                   (min max-dt (rand/exp lambda)))))
 
-  Also note that unlike Jepsen's original version of `stagger`, this delay
-  applies to *all* operations, not to each thread independently. If your old
-  stagger dt is 10, and your concurrency is 5, your new stagger dt should be
-  2."
-  [dt gen]
-  (when gen
-    (let [dt (secs->nanos (* 2 dt))]
-      (Stagger. dt nil gen))))
+             (fn? dt)
+             (if (nil? max-dt)
+               dt
+               (fn cap []
+                 (min max-dt (dt)))))
+       nil
+       gen))))
+
+(def stagger
+  "Shorthand for stagger-exp"
+  stagger-exp)
 
 ; This isn't actually DelayTil. It spreads out *all* requests evenly. Feels
 ; like it might be useful later.
