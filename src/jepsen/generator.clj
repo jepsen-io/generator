@@ -387,12 +387,15 @@
             [fipp.ednize :as fipp.ednize]
             [jepsen [history :as history]
                     [random :as rand]]
-            [jepsen.generator.context :as context]
+            [jepsen.generator [context :as context]
+                              [translation-table :as tt]]
             [potemkin :refer [import-vars]]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan Set)
            (java.lang.reflect Method)
-           (java.util ArrayList)))
+           (java.util ArrayList
+                      BitSet)
+           (jepsen.generator.context Context)))
 
 ;; These used to be a part of jepsen.generator directly, and it makes sense for
 ;; users to interact with them here. For cleanliness, they actually live in
@@ -1586,7 +1589,7 @@
             next-time (or next-time now)]
         (cond ; No need to do anything to pending ops
               (= :pending op)
-              [op this]
+              [op (Stagger. dt-fn next-time gen')]
 
               ; We're ready to issue this operation.
               (<= next-time (:time op))
@@ -1976,3 +1979,124 @@
   Updates are propagated to `gen`."
   [period gen]
   (Cache. gen (secs->nanos period) 0 (atom nil)))
+
+(declare relaxed-reconnect-healthy
+         relaxed-reconnect-advance
+         relaxed-reconnect-ctx)
+
+(defrecord RelaxedReconnect
+   [; The next time, in nanos, we'll advance our state. We use this to reduce
+    ; the number of expensive recomputations for waiting threads, at the cost of
+    ;being slightly sloppy about reconnect times.
+    ^long next-advance
+    ; A map of processes to the time, in nanoseconds, when they'll be
+    ; considered healthy.
+    deadlines
+    ; A lazily initialized BitSet of the threads in the context map which are
+    ; not waiting for reconnection. We intersect the context with this set to
+    ; make sure the downstream generator doesn't schedule operations for those
+    ; processes until we're ready.
+    healthy
+    ; The underlying generator
+    gen]
+  Generator
+  (op [this test ctx]
+    (let [this (relaxed-reconnect-advance this ctx)
+          ctx  (relaxed-reconnect-ctx this ctx)]
+      (when-let [[op gen'] (op gen test ctx)]
+        [op (assoc this :gen gen')])))
+
+  (update [this test ctx op]
+    (let [;this (relaxed-reconnect-advance this ctx)
+          this (if (and (identical? :fail (:type op))
+                        (identical? :no-client (first (:error op))))
+                 ; This thread lost its client; set a deadline and compute a
+                 ; new healthy bitset.
+                 (let [thread (context/process->thread ctx (:process op))
+                       deadlines' (assoc deadlines thread
+                                         (+ (:time ctx) 1000000000))
+                       healthy' (relaxed-reconnect-healthy ctx deadlines')]
+                   (RelaxedReconnect. (.next-advance this)
+                                      deadlines'
+                                      healthy'
+                                      gen))
+                 ; Some other op
+                 this)
+          ; Propagate update
+          gen' (update gen test (relaxed-reconnect-ctx this ctx) op)]
+      (assoc this :gen gen'))))
+
+(defn relaxed-reconnect-healthy
+  "Takes a Context and a deadlines map. Returns a fresh BitSet for this context
+  with only the healthy nodes, or nil if all are healthy."
+  [^Context ctx, deadlines]
+  (when (seq deadlines)
+    (let [tt (.translation-table ctx)
+          healthy ^BitSet (.clone ^BitSet (.-all-threads ctx))]
+      (loop [i 0]
+        (let [i (.nextSetBit healthy i)]
+          (when-not (= i -1)
+            (when (contains? deadlines (tt/index->name tt i))
+              ; This thread is on hold
+              (.clear healthy i))
+            (recur (inc i)))))
+      healthy)))
+
+(defn relaxed-reconnect-advance
+  "Updates a RelaxedReconnect to a new time based on the context. If the time
+  has advanced, we may expire deadlines and build a new healthy bitset."
+  [^RelaxedReconnect rr ^Context ctx]
+  (let [time (:time ctx)
+        deadlines (.deadlines rr)]
+    (if (and (<= (.next-advance rr) time)
+             (seq deadlines))
+      (let [; We need to check all the thread deadlines and expire any that are
+            ; too old.
+            changed?   (volatile! false)
+            deadlines' (persistent!
+                         (reduce (fn clear-deadlines
+                                   [deadlines [thread deadline]]
+                                   (if (< time deadline)
+                                     deadlines
+                                     (do (vreset! changed? true)
+                                         (dissoc! deadlines thread))))
+                                 (transient deadlines)
+                                 deadlines))
+            ; If we changed, we need to rebuild our healthy set
+            healthy' (if changed?
+                       (relaxed-reconnect-healthy ctx deadlines')
+                       (.healthy rr))]
+        (RelaxedReconnect.
+          ; Ten milliseconds from now, we can do this again.
+          (+ time 10000000)
+          deadlines'
+          healthy'
+          (.gen rr)))
+      ; Either we advanced recently, or all threads are OK
+      rr)))
+
+(defn relaxed-reconnect-ctx
+  "Takes a RelaxedReconnect and a Context, and computes a new Context with only
+  healthy threads free."
+  [^RelaxedReconnect rr ^Context ctx]
+  (if-let [healthy (.healthy rr)]
+    ; Mark threads as busy
+    (Context. (.time ctx)
+              (.next-thread-index ctx)
+              (.translation-table ctx)
+              (.-all-threads ctx)
+              (context/intersect-bitsets (.-free-threads ctx) healthy)
+              (.thread-index->process ctx)
+              (.-process->thread ctx)
+              (.ext-map ctx))
+    ; Nothing is waiting
+    ctx))
+
+(defn relaxed-reconnect
+  "Wraps a generator in one which, when a thread fails with `:error
+  [:no-client ...]`, holds off on scheduling the next operation for that thread
+  until one second later. While waiting to reconnect, these threads are marked
+  as busy in the context. This is helpful when you want to stop yourself from
+  throwing a million reqs/sec at a down node."
+  [gen]
+  (RelaxedReconnect. Long/MIN_VALUE {} nil gen))
