@@ -2013,7 +2013,9 @@
   (update [this test ctx op]
     (let [;this (relaxed-reconnect-advance this ctx)
           this (if (and (identical? :fail (:type op))
-                        (identical? :no-client (first (:error op))))
+                        (when-let [err (:error op)]
+                          (and (vector? err)
+                               (identical? :no-client (first err)))))
                  ; This thread lost its client; set a deadline and compute a
                  ; new healthy bitset.
                  (let [thread (context/process->thread ctx (:process op))
