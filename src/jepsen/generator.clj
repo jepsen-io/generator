@@ -1776,7 +1776,11 @@
           ; We're done!
           nil
           ; Still going
-          (if (h/invoke? event)
+          (if (or (h/invoke? event)
+                  ; Nemesis operations should leave the process active, because
+                  ; they go info/info, not invoke/complete. <sigh>
+                  (and (h/info? event)
+                       (keyword? p)))
             ; Pass through
             (Until. pred gen' active-processes)
             ; The process is no longer active
