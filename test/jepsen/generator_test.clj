@@ -306,10 +306,6 @@
     (is (= {:f :r} (gen/then {:f :r} nil)))
     (is (nil? (gen/then nil nil)))))
 
-(deftest until-ok-test
-  (testing "nil passthrough"
-    (is (nil? (gen/until-ok nil)))))
-
 (deftest any-test
   ; We take two generators, each of which is restricted to a single process,
   ; and each of which takes time to schedule. When we bind them together with
@@ -509,27 +505,53 @@
                   (gen.test/perfect (gen.test/n+nemesis-context 5))
                   (map (juxt :time :process :f :value))))))))
 
-(deftest at-least-one-ok-test
-  ; Our goal here is to ensure that at least one OK operation happens.
-  (is (= [[0   0 :invoke]
-          [0   1 :invoke]
-          [10  1 :fail]
-          [10  1 :invoke]
-          [10  0 :fail]
-          [10  0 :invoke]
-          [20  0 :info]
-          [20  2 :invoke]
-          [20  1 :info]
-          [20  3 :invoke]
-          [30  3 :ok]
-          [30  2 :ok]] ; They complete concurrently, so we get two oks
-         (->> {:f :read}
-              repeat
-              gen/until-ok
-              (gen/limit 10)
-              gen/clients
-              gen.test/imperfect
-              (map (juxt :time :process :type))))))
+(deftest until-ok-test
+  (testing "nil passthrough"
+    (is (nil? (gen/until-ok nil))))
+
+  (testing "at least one ok op"
+    ; Our goal here is to ensure that at least one OK operation happens.
+    (is (= [[0   0 :invoke]
+            [0   1 :invoke]
+            [10  1 :fail]
+            [10  1 :invoke]
+            [10  0 :fail]
+            [10  0 :invoke]
+            [20  0 :info]
+            [20  2 :invoke]
+            [20  1 :info]
+            [20  3 :invoke]
+            [30  3 :ok]
+            [30  2 :ok]] ; They complete concurrently, so we get two oks
+           (->> {:f :read}
+                repeat
+                gen/until-ok
+                (gen/limit 10)
+                gen/clients
+                gen.test/imperfect
+                (map (juxt :time :process :type)))))))
+
+(deftest until-test
+  (testing "nil passthrough"
+    (is (nil? (gen/until even? nil))))
+
+  (testing "an info"
+    ; Our goal here is to ensure that at least one gives us an info.
+    (is (= [[0   0 :invoke]
+            [0   1 :invoke]
+            [10  1 :fail]
+            [10  1 :invoke]
+            [10  0 :fail]
+            [10  0 :invoke]
+            [20  0 :info]  ; Our first info
+            [20  1 :info]] ; Concurrent
+           (->> {:f :read}
+                repeat
+                (gen/until (comp #{:info} :type))
+                (gen/limit 10)
+                gen/clients
+                gen.test/imperfect
+                (map (juxt :time :process :type)))))))
 
 (deftest flip-flop-test
   (is (= [[0 :write 0]

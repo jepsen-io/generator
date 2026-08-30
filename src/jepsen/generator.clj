@@ -385,7 +385,7 @@
             [clojure.pprint :as pprint :refer [pprint]]
             [dom-top.core :refer [loopr]]
             [fipp.ednize :as fipp.ednize]
-            [jepsen [history :as history]
+            [jepsen [history :as h]
                     [random :as rand]]
             [jepsen.generator [context :as context]
                               [translation-table :as tt]]
@@ -707,7 +707,7 @@
                   (if (= :pending op)
                     []
                     (cond-> []
-                      (not (history/op? op))
+                      (not (h/op? op))
                       (conj "should be either :pending or a jepsen.history.Op")
 
                       (not (#{:invoke :info :sleep :log} (:type op)))
@@ -1759,38 +1759,48 @@
         (nil? b)  a
         true      [b (synchronize a)]))
 
-(defrecord UntilOk [gen done? active-processes]
+(defrecord Until [pred gen active-processes]
   Generator
   (op [this test ctx]
-    (when-not done?
-      (when-let [[op gen'] (op gen test ctx)]
-        (if (= :pending op)
-          [op (assoc this :gen gen')]
-          [op (UntilOk. gen' done? (conj active-processes (:process op)))]))))
+    (when-let [[op gen'] (op gen test ctx)]
+      (if (= :pending op)
+        [op (assoc this :gen gen')]
+        [op (Until. pred gen' (conj active-processes (:process op)))])))
 
   (update [this test ctx event]
     (let [gen' (update gen test ctx event)
           p    (:process event)]
       (if (contains? active-processes p)
         ; This is an update related to one of our operations.
-        (case (:type event)
-          ; We're finished; no need to update any more!
-          :ok (UntilOk. gen' true (disj active-processes p))
+        (if (pred event)
+          ; We're done!
+          nil
+          ; Still going
+          (if (h/invoke? event)
+            ; Pass through
+            (Until. pred gen' active-processes)
+            ; The process is no longer active
+            (Until. pred gen' (disj active-processes p))))
+        ; Some process we weren't responsible for
+        (Until. pred gen' active-processes)))))
 
-          ; Crashed or failed; process no longer active, but we're not done.
-          (:info, :fail) (UntilOk. gen' done? (disj active-processes p))
+(defn until
+  "Wraps a generator, yielding operations from it until updated with an
+  operation matching (pred op). For example, if you wanted to run reads
+  until one failed:
 
-          ; Pass through
-          (UntilOk. gen' done? active-processes))
-        ; Some unrelated update
-        (UntilOk. gen' done? active-processes)))))
+      (until jepsen.history/fail? reads)
+
+  Note that because of concurrency, multiple operations might pass predicate."
+  [pred gen]
+  (when gen
+    (Until. pred gen #{})))
 
 (defn until-ok
   "Wraps a generator, yielding operations from it until one of those operations
   completes with :type :ok."
   [gen]
-  (when gen
-    (UntilOk. gen false #{})))
+  (until h/ok? gen))
 
 (defrecord FlipFlop [gens i]
   Generator
