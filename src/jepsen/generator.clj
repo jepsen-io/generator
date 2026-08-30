@@ -1476,6 +1476,8 @@
    (when (and gen (pos? limit))
      (Cycle. limit gen gen))))
 
+(declare process-limit-thread-filter)
+
 (defrecord ProcessLimit [; Our concurrency limit
                          n
                          ; We filter the context to at most n processes using
@@ -1491,18 +1493,8 @@
                          ]
   Generator
   (op [_ test ctx]
-    (let [; Laziliy initialize thread filter
-          thread-filter
-          (or thread-filter
-              (let [threads (context/all-threads ctx)]
-                (if (< n (b/size threads))
-                  ; We have too many threads!
-                  (context/make-thread-filter
-                    (set (take n threads))
-                    ctx)
-                  ; This is fine
-                  identity)))
-          ctx (thread-filter ctx)]
+    (let [thread-filter (or thread-filter (process-limit-thread-filter n ctx))
+          ctx           (thread-filter ctx)]
       (when-let [[op gen'] (op gen test ctx)]
         (if (= :pending op)
           [op (ProcessLimit. n thread-filter procs gen')]
@@ -1511,9 +1503,21 @@
               [op (ProcessLimit. n thread-filter procs' gen')]))))))
 
   (update [_ test ctx event]
-    (assert thread-filter)
-    (let [ctx (thread-filter ctx)]
+    (let [thread-filter (or thread-filter (process-limit-thread-filter n ctx))
+          ctx           (thread-filter ctx)]
       (ProcessLimit. n thread-filter procs (update gen test ctx event)))))
+
+(defn process-limit-thread-filter
+  "Constructs a thread filter which picks n threads in a Context."
+  [n ctx]
+  (let [threads (context/all-threads ctx)]
+    (if (< n (b/size threads))
+      ; We have too many threads!
+      (context/make-thread-filter
+        (set (take n threads))
+        ctx)
+      ; This is fine
+      identity)))
 
 (defn process-limit
   "Takes a generator and returns a generator with bounded concurrency--it emits
