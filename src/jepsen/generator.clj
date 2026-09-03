@@ -2120,3 +2120,33 @@
   throwing a million reqs/sec at a down node."
   [gen]
   (RelaxedReconnect. Long/MIN_VALUE {} nil gen))
+
+(defrecord Track [k f state gen]
+  Generator
+  (op [this test ctx]
+    (when-let [[op gen'] (op gen test (assoc ctx k state))]
+      [op (Track. k f state gen')]))
+
+  (update [this test ctx op]
+    (let [state' (f state op)
+          gen' (update gen test (assoc ctx k state') op)]
+      (Track. k f state' gen'))))
+
+(defn track
+  "Many generators need to keep track of some piece of state as operations flow
+  through them, and make that state available in the context for nested
+  generators. This takes a key `k`, an initial state `init`, and a reducing
+  function `f` that updates the state with `(f state op)` for every operation,
+  then an inner generator. The wrapped generator will always be called with a
+  context where `k` is the current state.
+
+  For example, say you wanted to keep track of the highest value
+  that was ever written:
+
+      (track :max 0 (fn [state op]
+                      (if (= :write (:f op))
+                        (max state (:value op))
+                        state))
+             (gen/mix [writes reads]))"
+  [k init f gen]
+  (Track. k f init gen))

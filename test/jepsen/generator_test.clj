@@ -2,7 +2,8 @@
   (:require [jepsen.generator [context :as ctx]
                               [test :as gen.test]]
             [jepsen [generator :as gen]
-                    [history :as h]]
+                    [history :as h]
+                    [random :as rand]]
             [clojure [pprint :refer [pprint]]
                      [test :refer :all]]
             [slingshot.slingshot :refer [try+ throw+]])
@@ -739,3 +740,24 @@
         ; But we skipped all the duplicate calls!
         (is (= [0 10 30 50 70] @log))))
     ))
+
+(deftest track-test
+  (is (= [[:invoke 3 -1]
+           [:invoke 7 3]
+           [:ok 7 3]
+           [:invoke 3 7]
+           [:ok 3 -1]
+           [:invoke 7 7]
+           [:ok 7 7]
+           [:invoke 1 7]
+           [:ok 3 7]
+           [:invoke 7 7]
+           [:ok 7 7]
+           [:ok 1 7]]
+         (->> (fn [test ctx]
+                {:f :write, :value (rand/long 10), :max (:max ctx)})
+              gen/clients
+              (gen/limit 6)
+              (gen/track :max -1 (fn [m op] (max m (:value op))))
+              gen.test/perfect*
+              (map (juxt :type :value :max))))))
