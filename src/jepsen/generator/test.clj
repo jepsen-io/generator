@@ -109,7 +109,14 @@
 
              ; We need to complete something before we can apply the next
              ; invocation.
-             (let [op     (first in-flight)
+             (let [gen'   (if (identical? :pending invoke)
+                            ; The generator was pending; we "advanced time" but
+                            ; let the generator step.
+                            gen'
+                            ; The generator was not pending; we did not consume
+                            ; anything from it, and it should remain unchanged.
+                            gen)
+                   op     (first in-flight)
                    _      (assert+ op
                                    {:type :generator-pending-but-nothing-in-flight
                                     :gen gen'
@@ -118,7 +125,7 @@
                    ; Advance clock, mark thread as free
                    ctx    (ctx/free-thread ctx (:time op) thread)
                    ; Update generator with completion
-                   gen'   (gen/update gen default-test ctx op)
+                   gen'   (gen/update gen' default-test ctx op)
                    ; Update worker mapping if this op crashed
                    ctx    (if (or (= :nemesis thread) (not= :info (:type op)))
                             ctx

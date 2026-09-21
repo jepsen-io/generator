@@ -1817,7 +1817,9 @@
   (op [this test ctx]
     (when-let [[op gen'] (op (nth gens i) test ctx)]
       [op (FlipFlop. (assoc gens i gen')
-                     (mod (inc i) (count gens)))]))
+                     (if (identical? op :pending)
+                       i
+                       (mod (inc i) (count gens))))]))
 
   (update [this test ctx event]
     this))
