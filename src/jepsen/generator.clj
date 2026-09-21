@@ -656,12 +656,14 @@
     (when (seq this) ; Once we're out of generators, we're done
       (let [gen (first this)]
         (if-let [[op gen'] (op gen test ctx)]
-          ; OK, our first gen has an op for us. If there's something following
-          ; us, we generate a cons cell as our resulting generator; otherwise,
-          ; just whatever this first element's next gen state is.
-          [op (if-let [nxt (next this)]
-                (cons gen' (next this))
-                gen')]
+          (if (identical? :pending op)
+            [op (cons gen' (next this))]
+            ; OK, our first gen has an op for us. If there's something following
+            ; us, we generate a cons cell as our resulting generator; otherwise,
+            ; just whatever this first element's next gen state is.
+            [op (if-let [nxt (next this)]
+                  (cons gen' (next this))
+                  gen')])
 
           ; This generator is exhausted; move on
           (recur (next this) test ctx))))))
@@ -704,7 +706,7 @@
             (if-not (and (vector? res) (= 2 (count res)))
               [(str "should return a vector of two elements.")]
               (let [[op gen'] res]
-                  (if (= :pending op)
+                  (if (identical? :pending op)
                     []
                     (cond-> []
                       (not (h/op? op))
@@ -854,7 +856,7 @@
   Generator
   (op [_ test ctx]
     (when-let [[op gen'] (op gen test ctx)]
-      [(if (= :pending op)
+      [(if (identical? :pending op)
          op
          ; Transform op
          (case arity
@@ -892,7 +894,7 @@
   (op [_ test ctx]
     (loop [gen gen]
       (when-let [[op gen'] (op gen test ctx)]
-        (if (or (= :pending op) (f op))
+        (if (or (identical? :pending op) (f op))
           ; We can let this through
           [op (Filter. f gen')]
           ; Next op!
@@ -1394,7 +1396,9 @@
   (op [_ test ctx]
     (when (pos? remaining)
       (when-let [[op gen'] (op gen test ctx)]
-        [op (Limit. (dec remaining) gen')])))
+        (if (identical? :pending op)
+          [op (Limit. remaining gen')]
+          [op (Limit. (dec remaining) gen')]))))
 
   (update [this test ctx event]
     (Limit. remaining (update gen test ctx event))))
@@ -1423,7 +1427,9 @@
   (op [_ test ctx]
     (when-not (= 0 remaining)
       (when-let [[op gen'] (op gen test ctx)]
-        [op (Repeat. (max -1 (dec remaining)) gen)])))
+        (if (identical? :pending op)
+          [op (Repeat. remaining gen')]
+          [op (Repeat. (max -1 (dec remaining)) gen)]))))
 
   (update [this test ctx event]
     (Repeat. remaining (update gen test ctx event))))
@@ -1496,7 +1502,7 @@
     (let [thread-filter (or thread-filter (process-limit-thread-filter n ctx))
           ctx           (thread-filter ctx)]
       (when-let [[op gen'] (op gen test ctx)]
-        (if (= :pending op)
+        (if (identical? :pending op)
           [op (ProcessLimit. n thread-filter procs gen')]
           (let [procs' (into procs (all-processes ctx))]
             (when (<= (count procs') n)
@@ -1592,7 +1598,7 @@
       (let [now       (:time ctx)
             next-time (or next-time now)]
         (cond ; No need to do anything to pending ops
-              (= :pending op)
+              (identical? :pending op)
               [op (Stagger. dt-fn next-time gen')]
 
               ; We're ready to issue this operation.
@@ -1685,7 +1691,7 @@
   Generator
   (op [_ test ctx]
     (when-let [[op gen'] (op gen test ctx)]
-      (if (= op :pending)
+      (if (identical? op :pending)
         ; Just pass these through; we don't know when they'll occur!
         [op (Delay. dt next-time gen')]
 
@@ -1763,7 +1769,7 @@
   Generator
   (op [this test ctx]
     (when-let [[op gen'] (op gen test ctx)]
-      (if (= :pending op)
+      (if (identical? :pending op)
         [op (assoc this :gen gen')]
         [op (Until. pred gen' (conj active-processes (:process op)))])))
 
@@ -1869,7 +1875,7 @@
 
                 ; We're pending--we might choose to emit an operation before
                 ; this window is over.
-                (= :pending op)
+                (identical? :pending op)
                 [:pending (CycleTimes. period t0 intervals cutoffs
                                        (assoc gens i gen'))]
 
