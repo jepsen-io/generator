@@ -1388,7 +1388,9 @@
   should probably cycle on :pending."
   [gens]
   (let [gens (vec (remove nil? gens))]
-    (when (seq gens)
+    (case (count gens)
+      0 nil
+      1 (first gens)
       (Mix. (rand/long (count gens)) gens))))
 
 (defrecord Limit [remaining gen]
