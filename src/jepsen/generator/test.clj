@@ -72,13 +72,15 @@
   ([gen complete-fn]
    (simulate default-context gen complete-fn))
   ([ctx gen complete-fn]
+   (simulate default-test ctx gen complete-fn))
+  ([test ctx gen complete-fn]
    (with-fixed-rands rand-seed
      (loop [ops        []
             in-flight  [] ; Kept sorted by time
             gen        (gen/validate gen)
             ctx        ctx]
        ;(binding [*print-length* 3] (prn :invoking :gen gen))
-       (let [[invoke gen'] (gen/op gen default-test ctx)]
+       (let [[invoke gen'] (gen/op gen test ctx)]
          ; (prn :invoke invoke :in-flight in-flight)
          (if (nil? invoke)
            ; We're done
@@ -100,7 +102,7 @@
                                (max (:time ctx) (:time invoke))
                                thread)
                    ; Update the generator with this invocation
-                   gen'      (gen/update gen' default-test ctx invoke)
+                   gen'      (gen/update gen' test ctx invoke)
                    ; Add the completion to the in-flight set
                    ;_         (prn :invoke invoke)
                    complete  (complete-fn ctx invoke)
@@ -125,7 +127,7 @@
                    ; Advance clock, mark thread as free
                    ctx    (ctx/free-thread ctx (:time op) thread)
                    ; Update generator with completion
-                   gen'   (gen/update gen' default-test ctx op)
+                   gen'   (gen/update gen' test ctx op)
                    ; Update worker mapping if this op crashed
                    ctx    (if (or (= :nemesis thread) (not= :info (:type op)))
                             ctx
@@ -139,14 +141,18 @@
   ([gen]
    (quick-ops default-context gen))
   ([ctx gen]
-   (simulate ctx gen (fn [ctx invoke] (assoc invoke :type :ok)))))
+   (quick-ops default-test ctx gen))
+  ([test ctx gen]
+   (simulate test ctx gen (fn [ctx invoke] (assoc invoke :type :ok)))))
 
 (defn quick
   "Like quick-ops, but returns just invocations."
   ([gen]
    (quick default-context gen))
   ([ctx gen]
-   (invocations (quick-ops ctx gen))))
+   (quick default-test ctx gen))
+  ([test ctx gen]
+   (invocations (quick-ops test ctx gen))))
 
 (def perfect-latency
   "How long perfect operations take"
@@ -159,7 +165,9 @@
   ([gen]
    (perfect* default-context gen))
   ([ctx gen]
-   (simulate ctx gen
+   (perfect* default-test ctx gen))
+  ([test ctx gen]
+   (simulate test ctx gen
              (fn [ctx invoke]
                (-> invoke
                    (assoc :type :ok)
@@ -172,7 +180,9 @@
   ([gen]
    (perfect default-context gen))
   ([ctx gen]
-   (invocations (perfect* ctx gen))))
+   (perfect default-test ctx gen))
+  ([test ctx gen]
+   (invocations (perfect* test ctx gen))))
 
 (defn perfect-info
   "Simulates the series of ops obtained from a generator where every operation
@@ -180,8 +190,10 @@
   ([gen]
    (perfect-info default-context gen))
   ([ctx gen]
+   (perfect-info default-test ctx gen))
+  ([test ctx gen]
    (invocations
-     (simulate ctx gen
+     (simulate test ctx gen
                (fn [ctx invoke]
                  (-> invoke
                      (assoc :type :info)
@@ -194,8 +206,10 @@
   ([gen]
    (imperfect default-context gen))
   ([ctx gen]
+   (imperfect default-test ctx gen))
+  ([test ctx gen]
    (let [state (atom {})]
-     (simulate ctx gen
+     (simulate test ctx gen
                (fn [ctx invoke]
                  (let [t (gen/process->thread ctx (:process invoke))]
                    (-> invoke
