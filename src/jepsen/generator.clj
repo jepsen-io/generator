@@ -390,7 +390,7 @@
             [jepsen.generator [context :as context]
                               [translation-table :as tt]]
             [potemkin :refer [import-vars]]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [clj-commons.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan Set)
            (java.lang.reflect Method)
            (java.util ArrayList
