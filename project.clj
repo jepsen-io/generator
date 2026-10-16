@@ -8,7 +8,7 @@
                  [org.clj-commons/primitive-math "1.0.1"]
                  [org.clojure/data.generators "1.1.1"
                   :exclusions [org.clojure/clojure]]
-                 [slingshot "0.12.2"]]
+                 [org.clj-commons/slingshot "0.13.0"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.12.5"]
                                   [criterium "0.4.6"]]}}
   :repl-options {:init-ns user}
