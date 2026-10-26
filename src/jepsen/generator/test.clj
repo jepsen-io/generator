@@ -85,7 +85,9 @@
          (cond
            ; We're done
            (nil? invoke)
-           (->> (into ops in-flight)
+           (->> in-flight
+                (remove (comp #{:sleep :log} :type))
+                (into ops)
                 (history/strip-indices))
 
            ; TODO: the order of updates for worker maps here isn't correct; fix
@@ -144,10 +146,10 @@
                  ctx    (ctx/free-thread ctx (:time op) thread)]
              (case (:type op)
                :sleep
-               (recur ops (rest in-flight) gen ctx)
+               (recur ops (rest in-flight) gen' ctx)
 
                ; Normal completion
-               (:log :ok :info :fail)
+               (:ok :info :fail)
                (let [; Update generator with completion
                      gen'   (gen/update gen' test ctx op)
                      ; Update worker mapping if this op crashed
