@@ -82,57 +82,79 @@
        ;(binding [*print-length* 3] (prn :invoking :gen gen))
        (let [[invoke gen'] (gen/op gen test ctx)]
          ; (prn :invoke invoke :in-flight in-flight)
-         (if (nil? invoke)
+         (cond
            ; We're done
+           (nil? invoke)
            (->> (into ops in-flight)
                 (history/strip-indices))
 
            ; TODO: the order of updates for worker maps here isn't correct; fix
            ; it.
-           (if (and (not= :pending invoke)
-                    (or (empty? in-flight)
-                        (<= (:time invoke) (:time (first in-flight)))))
+           ; We have an invocation that's not pending, and that invocation is
+           ; before every in-flight completion
+           (and (not= :pending invoke)
+                (or (empty? in-flight)
+                    (<= (:time invoke) (:time (first in-flight)))))
+           (let [thread (gen/process->thread ctx (:process invoke))
+                 ; Advance clock, mark thread as busy
+                 ctx'   (ctx/busy-thread
+                          ctx
+                          (max (:time ctx) (:time invoke))
+                          thread)]
+             (case (:type invoke)
+               (:invoke, :info)
+               (let [; Update the generator with this invocation
+                     gen'      (gen/update gen' test ctx' invoke)
+                     ; Add the completion to the in-flight set
+                     ;_         (prn :invoke invoke)
+                     complete  (complete-fn ctx' invoke)
+                     in-flight (sort-by :time (conj in-flight complete))]
+                 (recur (conj ops invoke) in-flight gen' ctx'))
 
-             ; We have an invocation that's not pending, and that invocation is
-             ; before every in-flight completion
-             (let [thread    (gen/process->thread ctx (:process invoke))
-                   ; Advance clock, mark thread as busy
-                   ctx       (ctx/busy-thread
-                               ctx
-                               (max (:time ctx) (:time invoke))
-                               thread)
-                   ; Update the generator with this invocation
-                   gen'      (gen/update gen' test ctx invoke)
-                   ; Add the completion to the in-flight set
-                   ;_         (prn :invoke invoke)
-                   complete  (complete-fn ctx invoke)
-                   in-flight (sort-by :time (conj in-flight complete))]
-               (recur (conj ops invoke) in-flight gen' ctx))
+               ; For logs... you *might* want to see these so you can test
+               ; logging, but log ops don't actually appear in the history, so
+               ; I think the thing to do is to silently drop them.
+               :log (recur ops in-flight gen' ctx)
 
-             ; We need to complete something before we can apply the next
-             ; invocation.
-             (let [gen'   (if (identical? :pending invoke)
-                            ; The generator was pending; we "advanced time" but
-                            ; let the generator step.
-                            gen'
-                            ; The generator was not pending; we did not consume
-                            ; anything from it, and it should remain unchanged.
-                            gen)
-                   op     (first in-flight)
-                   _      (assert+ op
-                                   {:type :generator-pending-but-nothing-in-flight
-                                    :gen gen'
-                                    :ctx (datafy ctx)})
-                   thread (gen/process->thread ctx (:process op))
-                   ; Advance clock, mark thread as free
-                   ctx    (ctx/free-thread ctx (:time op) thread)
-                   ; Update generator with completion
-                   gen'   (gen/update gen' test ctx op)
-                   ; Update worker mapping if this op crashed
-                   ctx    (if (or (= :nemesis thread) (not= :info (:type op)))
-                            ctx
-                            (ctx/with-next-process ctx thread))]
-               (recur (conj ops op) (rest in-flight) gen' ctx)))))))))
+               ; Sleeps are weird: the thread is busy, but we don't put
+               ; anything in the history.
+               :sleep
+               (let [complete (assoc invoke :time (+ (:time invoke)
+                                                     (:value invoke)))
+                     in-flight (sort-by :time (conj in-flight complete))]
+                 (recur ops in-flight gen' ctx'))))
+
+           ; We need to complete something before we can apply the next
+           ; invocation.
+           :else
+           (let [gen'   (if (identical? :pending invoke)
+                          ; The generator was pending; we "advanced time" but
+                          ; let the generator step.
+                          gen'
+                          ; The generator was not pending; we did not consume
+                          ; anything from it, and it should remain unchanged.
+                          gen)
+                 op     (first in-flight)
+                 _      (assert+ op
+                                 {:type :generator-pending-but-nothing-in-flight
+                                  :gen gen'
+                                  :ctx (datafy ctx)})
+                 thread (gen/process->thread ctx (:process op))
+                 ; Advance clock, mark thread as free
+                 ctx    (ctx/free-thread ctx (:time op) thread)]
+             (case (:type op)
+               :sleep
+               (recur ops (rest in-flight) gen ctx)
+
+               ; Normal completion
+               (:log :ok :info :fail)
+               (let [; Update generator with completion
+                     gen'   (gen/update gen' test ctx op)
+                     ; Update worker mapping if this op crashed
+                     ctx    (if (or (= :nemesis thread) (not= :info (:type op)))
+                              ctx
+                              (ctx/with-next-process ctx thread))]
+                 (recur (conj ops op) (rest in-flight) gen' ctx))))))))))
 
 (defn quick-ops
   "Simulates the series of ops obtained from a generator where the
