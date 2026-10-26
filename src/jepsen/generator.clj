@@ -1398,7 +1398,9 @@
   (op [_ test ctx]
     (when (pos? remaining)
       (when-let [[op gen'] (op gen test ctx)]
-        (if (identical? :pending op)
+        (if (or (identical? :pending op)
+                (identical? :sleep (:type op))
+                (identical? :log (:type op)))
           [op (Limit. remaining gen')]
           [op (Limit. (dec remaining) gen')]))))
 
@@ -1407,7 +1409,8 @@
 
 (defn limit
   "Wraps a generator and ensures that it returns at most `limit` operations.
-  Propagates every update to the underlying generator."
+  Propagates every update to the underlying generator. Pending, sleep, and log
+  operations do not count against the limit."
   [remaining gen]
   (when gen
     (Limit. remaining gen)))
