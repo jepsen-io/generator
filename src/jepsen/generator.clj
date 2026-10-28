@@ -1724,6 +1724,8 @@
   "Emits exactly one special operation which causes its receiving process to do
   nothing for dt seconds. Use (repeat (sleep 10)) to sleep repeatedly."
   [dt]
+  (assert (and (number? dt) (not (neg? dt)))
+          (str "sleep must take a non-negative number, not " (pr-str dt)))
   {:type :sleep, :value dt})
 
 (defrecord Synchronize [gen]
