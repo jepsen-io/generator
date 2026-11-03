@@ -78,7 +78,16 @@
     rand/exp        Exponential distribution
     rand/geometric  Geometric distribution
     rand/zipf       Zipfian distribution
+    rand/zipf-permuted-range-fn
+                    A function which draws Zipfian-distributed (randomly
+                    permuted) integer values in some range.
     rand/weighted   Discrete values with given weights
+
+  And strings:
+
+    rand/zipf-codepoint
+    rand/zipf-alphanumeric-codepoint
+    rand/str
 
   You can take random permutations and subsets (really, ordered prefixes of
   permutations) of collections with:
@@ -319,6 +328,88 @@
                  (- sample-x 1)
                  (recur)))))))))
 
+(declare shuffle)
+
+(defn small-range-perfect-hash-fn
+  "Constructs a minimal perfect hash function for the range of longs [lower,
+  upper). For example, given the range 3 6, (hash 4) might return 6, (hash 5)
+  might return 3, and so on. This is not clever, and constructs an array of n
+  integers--right now we're doing this for small ranges only.
+
+  At some point I (or an enterprising person) should write a proper hash
+  function here."
+  [^long lower, ^long upper]
+  (let [n (- upper lower)
+        array-fn (condp < n
+                   Short/MAX_VALUE int-array
+                   Byte/MAX_VALUE short-array
+                   byte-array)
+        table (array-fn (shuffle (range n)))]
+    (fn hash ^long [^long x]
+      (+ lower (aget table (- x lower))))))
+
+(defn zipf-permuted-range-fn
+  "Takes a [lower, upper) range. Returns a function that returns random longs
+  in that range, with a Zipfian-distributed frequency. Each call to this
+  function picks a different permutation of the values, so you'll get lots of
+  collisions with any given function we return, but *which* values are most
+  frequent will be different each time you call this. Requires O(upper-lower)
+  storage, so don't use this with large ranges."
+  [^long lower, ^long upper]
+  (let [n    (- upper lower)
+        hash (small-range-perfect-hash-fn 0 n)]
+    (fn gen ^long [] (+ lower (hash (zipf n))))))
+
+; Strings
+
+(defn zipf-codepoint
+  "Generates a Zipfian-distributed valid Unicode codepoint, as a long."
+  (^long []
+         (zipf-codepoint 1.5))
+  (^long [^double skew]
+         ; We want collisions, so this is zipf distributed, but spread over the
+         ; whole Integer range, so we hit weird corners of Unicode.
+         (let [cp (mod (hash (inc (zipf skew (* 2 0x10FFFF))))
+                       0x10FFFF)]
+           (if (Character/isDefined cp)
+             cp
+             (recur skew)))))
+
+(defn zipf-alphanumeric-codepoint
+  "Generates a Zipfian-distributed long codepoint in the range 0-9a-zA-Z.
+  Helpful when you'd like to generate keys that sometimes collide often, and
+  also have them be easy to print."
+  ([]
+   (zipf-alphanumeric-codepoint zipf-default-skew))
+  ([^double skew]
+   (let [i (zipf skew 62)]
+     (condp <= i
+       ; 36-61 map to uppercase (65-90)
+       36 (+ 29 i)
+
+       ; 10-35 map to lowercase (97-122)
+       10
+       (+ i 87)
+
+       ; 0-9 map to digits (48-57)
+       (+ i 48)))))
+
+(defn str
+  "Generates random strings. Takes two functions generating random longs: one
+  for the length, and the second for a codepoint."
+  (^String []
+           (str (partial zipf 64)))
+  (^String [length-fn]
+           (str length-fn zipf-codepoint))
+  (^String [length-fn codepoint-fn]
+           (let [n (c/long (length-fn))
+                 sb (StringBuilder. n)]
+             (loop [i n]
+               (if (<= i 0)
+                 (c/str sb)
+                 (do (.appendCodePoint sb (c/long (codepoint-fn)))
+                     (recur (dec i))))))))
+
 ; Choosing things from collections
 
 (defn nth
@@ -391,7 +482,7 @@
 
       ; Unknown
       true (throw (IllegalArgumentException.
-                    (str "weighted-choice-fn expects a map, not a "
+                    (c/str "weighted-choice-fn expects a map, not a "
                          (type choices)
                          ": " (pr-str choices)))))
     (let [^double total-weight (areduce weights i ret 0.0

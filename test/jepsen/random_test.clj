@@ -181,6 +181,100 @@
         (is (= {0 68267, 1 17214, 2 7515, 3 4277, 4 2727}
                (into (sorted-map) (frequencies xs))))))))
 
+(deftest small-range-perfect-hash-fn-test
+  (testing "byte"
+    (r/with-seed 47
+      (let [h (r/small-range-perfect-hash-fn -4 2)]
+        (is (= [-2 0 -3 -4 1 -1] (map h (range -4 2)))))))
+
+  (testing "short"
+    (let [lower (r/long)
+          upper (+ lower (* 3 Byte/MAX_VALUE))
+          h     (r/small-range-perfect-hash-fn lower upper)
+          in    (range lower upper)
+          out   (mapv h in)
+          out-set (set out)]
+      (is (= (set in) out-set))
+      (is (= (count out) (count out-set))))))
+
+(deftest zipf-permuted-range-fn-test
+  (r/with-seed 333333
+    (let [z (r/zipf-permuted-range-fn 10 20)]
+      (is (= {10 3
+              11 8
+              12 5
+              13 18
+              14 7
+              15 10
+              16 7
+              17 7
+              18 29
+              19 6}
+             (frequencies (take 100 (repeatedly z))))))))
+
+(deftest zipf-codepoint-test
+  (r/with-seed 1960
+    (is (= {1089948 1,
+             82617 2,
+             167073 1,
+             65058 1,
+             22291 1,
+             28299 2,
+             1071034 1,
+             166125 1,
+             1111264 1,
+             1017880 1,
+             32372 1,
+             1017887 1,
+             199253 29,
+             1104683 3,
+             111030 1,
+             7942 1,
+             167972 1,
+             179067 1,
+             986499 1,
+             1073575 2,
+             43425 1,
+             1087437 2,
+             67425 1,
+             21054 43}
+           (frequencies
+             (take 100 (repeatedly r/zipf-codepoint)))))))
+
+(deftest zipf-alphanumeric-codepoint-test
+  (r/with-seed -56
+    (is (= {"T" 4, "d" 12, "n" 5, "9" 20, "K" 2, "z" 5, "w" 7, "3" 64, "s" 11, "4" 41, "f" 16, "8" 25, "e" 9, "Q" 9, "q" 12, "L" 2, "p" 8, "j" 9, "x" 9, "G" 3, "J" 7, "v" 12, "M" 2, "S" 6, "Y" 5, "Z" 3, "H" 6, "7" 21, "5" 34, "E" 2, "R" 4, "C" 5, "F" 9, "B" 3, "a" 24, "6" 26, "P" 4, "t" 8, "V" 3, "U" 5, "O" 5, "i" 15, "k" 4, "b" 10, "r" 11, "y" 11, "1" 104, "0" 203, "g" 13, "X" 4, "l" 10, "N" 7, "u" 7, "A" 6, "h" 8, "I" 1, "2" 75, "m" 5, "W" 6, "D" 7, "o" 10, "c" 16}
+           (into (sorted-map)
+                 (frequencies
+                   (take 1000 (repeatedly #(Character/toString
+                                             (r/zipf-alphanumeric-codepoint))))))))))
+
+(deftest str-test
+  (r/with-seed 237456
+    (is (= ["𔊹"
+            "􊬔刾刾刾𰩕𰩕刾󰶃刾𰩕𣪸􍬫􀽙𰩕􌞊刾󰁦刾"
+            "刾"
+            "刾􂠃𰩕𰩕𰩕𰩕"
+            "𰩕"
+            "󾬺𣪸刾"
+            "刾􍬫"
+            "􆆧刾刾𰩕𣪸刾􌛑𰩕刾刾刾刾𰩕刾𦞴刾刾𰩕刾"
+            ""
+            "刾𔊹𰩕刾𰩕刾𰩕𰩕刾刾𰩕𰩕𰩕𠴉刾𰩕刾刾刾㰚􍬫􆆧󰓙𰩕𰩕􈇕刾"]
+           (take 10 (repeatedly r/str)))))
+  (r/with-seed 5
+    (is (= ["720"
+            "Ibc"
+            "3Ha"
+            "200"
+            "5e1"
+            "24a"
+            "273"
+            "0O4"
+            "01p"
+            "0Ar"]
+           (take 10 (repeatedly #(r/str (constantly 3) r/zipf-alphanumeric-codepoint)))))))
+
 ; Choosing elements
 
 (deftest nth-test
