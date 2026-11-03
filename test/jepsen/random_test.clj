@@ -197,21 +197,6 @@
       (is (= (set in) out-set))
       (is (= (count out) (count out-set))))))
 
-(deftest zipf-permuted-range-fn-test
-  (r/with-seed 333333
-    (let [z (r/zipf-permuted-range-fn 10 20)]
-      (is (= {10 3
-              11 8
-              12 5
-              13 18
-              14 7
-              15 10
-              16 7
-              17 7
-              18 29
-              19 6}
-             (frequencies (take 100 (repeatedly z))))))))
-
 (deftest zipf-codepoint-test
   (r/with-seed 1960
     (is (= {1089948 1,
@@ -386,6 +371,14 @@
                          (swap! branch-side inc))
       (is (= [2 3] @weight-side))
       (is (= 1 @branch-side)))))
+
+(deftest filter-fn-test
+  (let [f (r/filter-fn even? r/long)]
+    (is (every? even? (take 10 (repeatedly f)))))
+
+  (let [f (r/filter-fn odd? r/zipf)]
+    (is (every? odd? (take 10 (repeatedly #(f 100)))))
+    (is (every? odd? (take 10 (repeatedly #(f 1.2 100)))))))
 
 ; Perf
 

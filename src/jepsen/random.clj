@@ -78,9 +78,6 @@
     rand/exp        Exponential distribution
     rand/geometric  Geometric distribution
     rand/zipf       Zipfian distribution
-    rand/zipf-permuted-range-fn
-                    A function which draws Zipfian-distributed (randomly
-                    permuted) integer values in some range.
     rand/weighted   Discrete values with given weights
 
   And strings:
@@ -111,7 +108,7 @@
   but if those threads are spawned in a nondeterministic order, then their
   calls to jepsen.random will also be nondeterministic.
   "
-  (:refer-clojure :exclude [double long nth shuffle])
+  (:refer-clojure :exclude [double long nth shuffle str])
   (:require [clj-commons.primitive-math :as p]
             [clojure.core :as c]
             [clojure.data.generators :as dg]
@@ -340,25 +337,21 @@
   function here."
   [^long lower, ^long upper]
   (let [n (- upper lower)
-        array-fn (condp < n
-                   Short/MAX_VALUE int-array
-                   Byte/MAX_VALUE short-array
-                   byte-array)
-        table (array-fn (shuffle (range n)))]
-    (fn hash ^long [^long x]
-      (+ lower (aget table (- x lower))))))
+        xs (shuffle (range n))]
+    (condp < n
+      Short/MAX_VALUE
+      (let [table (int-array xs)]
+        (fn hash-int ^long [^long x]
+          (+ lower (aget table (- x lower)))))
 
-(defn zipf-permuted-range-fn
-  "Takes a [lower, upper) range. Returns a function that returns random longs
-  in that range, with a Zipfian-distributed frequency. Each call to this
-  function picks a different permutation of the values, so you'll get lots of
-  collisions with any given function we return, but *which* values are most
-  frequent will be different each time you call this. Requires O(upper-lower)
-  storage, so don't use this with large ranges."
-  [^long lower, ^long upper]
-  (let [n    (- upper lower)
-        hash (small-range-perfect-hash-fn 0 n)]
-    (fn gen ^long [] (+ lower (hash (zipf n))))))
+      Byte/MAX_VALUE
+      (let [table (short-array xs)]
+        (fn hash-short ^long [^long x]
+          (+ lower (aget table (- x lower)))))
+
+      (let [table (byte-array xs)]
+        (fn hash-byte ^long [^long x]
+          (+ lower (aget table (- x lower))))))))
 
 ; Strings
 
@@ -371,7 +364,7 @@
          ; whole Integer range, so we hit weird corners of Unicode.
          (let [cp (mod (hash (inc (zipf skew (* 2 0x10FFFF))))
                        0x10FFFF)]
-           (if (Character/isDefined cp)
+           (if (Character/isDefined ^long cp)
              cp
              (recur skew)))))
 
@@ -605,3 +598,39 @@
   (let [c (count coll)]
     (when (< 0 c)
       (take (inc (long c)) (shuffle coll)))))
+
+; Functional combinators
+
+(defn filter-fn
+  "Often you want to filter a random-generating function to exclude just a few
+  values, like 0 or '/'. This takes a predicate `pred` and a function `f` of any
+  args, and returns a function just like `f`, but which only emits values
+  matching `(pred x)`."
+  [pred f]
+  (fn filter
+    ([]
+     (let [x (f)]
+          (if (pred x)
+            x
+            (recur))))
+    ([a]
+     (let [x (f a)]
+       (if (pred x)
+         x
+         (recur a))))
+    ([a b]
+     (let [x (f a b)]
+       (if (pred x)
+         x
+         (recur a b))))
+    ([a b c]
+     (let [x (f a b c)]
+       (if (pred x)
+         x
+         (recur a b c))))
+    ([a b c & more]
+     (loop []
+       (let [x (apply f a b c more)]
+         (if (pred x)
+           x
+           (recur)))))))
