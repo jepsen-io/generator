@@ -199,30 +199,30 @@
 
 (deftest zipf-codepoint-test
   (r/with-seed 1960
-    (is (= {1089948 1,
-             82617 2,
-             167073 1,
-             65058 1,
-             22291 1,
-             28299 2,
-             1071034 1,
-             166125 1,
-             1111264 1,
-             1017880 1,
-             32372 1,
-             1017887 1,
-             199253 29,
-             1104683 3,
-             111030 1,
-             7942 1,
-             167972 1,
-             179067 1,
-             986499 1,
-             1073575 2,
-             43425 1,
-             1087437 2,
-             67425 1,
-             21054 43}
+    (is (= {25094 1,
+            987556 1,
+            1047463 1,
+            22451 44,
+            51145 1,
+            26385 2,
+            1039222 1,
+            156113 1,
+            66640 1,
+            1017028 1,
+            20639 1,
+            1085758 2,
+            1090982 1,
+            199974 28,
+            48340 1,
+            1054402 1,
+            95084 1,
+            1018951 1,
+            985130 1,
+            1072186 2,
+            65314 1,
+            74439 1,
+            80787 2,
+            1105145 3}
            (frequencies
              (take 100 (repeatedly r/zipf-codepoint)))))))
 
@@ -234,19 +234,82 @@
                    (take 1000 (repeatedly #(Character/toString
                                              (r/zipf-alphanumeric-codepoint))))))))))
 
+(defn unpaired-surrogate
+  "Does a String contain any unpaired surrogates? If so, returns the first such codepoint as a long."
+  [^String s]
+  ; (.codepoints str) returns a sequence of integer codepoints, but zero-extends
+  ; unpaired surrogates; we look for codepoints that *could* be chars, then ask
+  ; if they're surrogates. prev is either nil or a high codepoint.
+  (stream-reduce! (fn [prev ^long codepoint]
+                    (if prev
+                      ; If we just had a high codepoint, we must see a low one.
+                      (if (and (Character/isBmpCodePoint codepoint)
+                               (Character/isLowSurrogate (char codepoint)))
+                          nil
+                          (reduced prev))
+
+                      ; We can have either a high surrogate or a non-surrogate
+                      (if (Character/isBmpCodePoint codepoint)
+                        (let [c (char codepoint)]
+                          (cond (Character/isLowSurrogate c)
+                                (reduced codepoint)
+
+                                (Character/isHighSurrogate c)
+                                codepoint
+
+                                ; A BMP non-surrogate
+                                :else
+                                nil))
+                        ; Outside the BMP
+                        nil)))
+                  nil
+                  (.codePoints s)))
+
+(deftest unpaired-surrogate-test
+  (are [bad codepoints]
+       (= (if (nil? bad)
+            nil
+            (int bad))
+          (unpaired-surrogate
+            (str (reduce (fn [^StringBuilder sb, codepoint]
+                           (.appendCodePoint sb (int codepoint)))
+                         (StringBuilder.)
+                         codepoints))))
+       ; Empty
+       nil []
+       ; ASCII
+       nil [\a \b \c]
+       ; Unpaired high
+       Character/MIN_HIGH_SURROGATE [Character/MIN_HIGH_SURROGATE]
+       Character/MIN_HIGH_SURROGATE [\a Character/MIN_HIGH_SURROGATE \z]
+       ; Unpaired low
+       Character/MIN_LOW_SURROGATE [Character/MIN_LOW_SURROGATE]
+       Character/MIN_LOW_SURROGATE [\a Character/MIN_LOW_SURROGATE \z]
+       ; Double high
+       Character/MIN_HIGH_SURROGATE [Character/MIN_HIGH_SURROGATE Character/MAX_HIGH_SURROGATE]
+       Character/MIN_HIGH_SURROGATE [\a Character/MIN_HIGH_SURROGATE Character/MAX_HIGH_SURROGATE \z]
+       ; High then low
+       nil [Character/MIN_HIGH_SURROGATE Character/MIN_LOW_SURROGATE]
+       ))
+
 (deftest str-test
   (r/with-seed 237456
-    (is (= ["𔊹"
-            "􊬔刾刾刾𰩕𰩕刾󰶃刾𰩕𣪸􍬫􀽙𰩕􌞊刾󰁦刾"
-            "刾"
-            "刾􂠃𰩕𰩕𰩕𰩕"
-            "𰩕"
-            "󾬺𣪸刾"
-            "刾􍬫"
-            "􆆧刾刾𰩕𣪸刾􌛑𰩕刾刾刾刾𰩕刾𦞴刾刾𰩕刾"
-            ""
-            "刾𔊹𰩕刾𰩕刾𰩕𰩕刾刾𰩕𰩕𰩕𠴉刾𰩕刾刾刾㰚􍬫􆆧󰓙𰩕𰩕􈇕刾"]
+    (is (= ["𓮓"
+           "􊚇垳垳垳𰴦𰴦垳󱆤垳𰴦𣹼􍳹􀥽𰴦垳垳垳垳"
+           "􂓲𰴦𰴦𰴦𰴦"
+           "𰴦"
+           "󾽩𣹼垳"
+           "垳􍳹"
+           "􅰺垳垳𰴦𣹼垳􍲺𰴦垳垳􊖦垳垳𰴦𫼢垳􊚇垳垳"
+           "𰴦垳𓮓􎼶垳𓮓𰴦垳𰴦垳𰴦𰴦垳󰄍垳𰴦"
+           "𰴦"
+           "𰴦𡁰"]
            (take 10 (repeatedly r/str)))))
+  ; Should not generate solitary surrogates. Java can represent these as Strings, but they're illegal under Unicode.
+  (r/with-seed 1
+    (dotimes [i 10000]
+      (is (not (unpaired-surrogate (r/str))))))
+
   (r/with-seed 5
     (is (= ["720"
             "Ibc"

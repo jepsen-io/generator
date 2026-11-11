@@ -356,25 +356,35 @@
 ; Strings
 
 (defn zipf-codepoint
-  "Generates a Zipfian-distributed valid Unicode codepoint, as a long."
+  "Generates a Zipfian-distributed valid Unicode codepoint, as a long.
+  Optionally takes a [lower, upper) range of codepoints."
   (^long []
          (zipf-codepoint 1.5))
   (^long [^double skew]
-         ; We want collisions, so this is zipf distributed, but spread over the
-         ; whole Integer range, so we hit weird corners of Unicode.
-         (let [cp (mod (hash (inc (zipf skew (* 2 0x10FFFF))))
-                       0x10FFFF)]
+         (zipf-codepoint skew
+                         (unchecked-int Character/MIN_CODE_POINT)
+                         (inc (unchecked-int (Character/MAX_CODE_POINT)))))
+  (^long [^long lower, ^long upper]
+         (zipf-codepoint 1.5 lower upper))
+  (^long [^double skew, ^long lower, ^long upper]
+         (let [n  (- upper lower)
+               ; We want collisions, so this is zipf distributed, but spread
+               ; over the whole Integer range, so we hit weird corners of
+               ; Unicode.
+               cp (+ lower
+                     ; We increment to get away from 0, which hashes to 0
+                     (mod (hash (inc (zipf skew n))) n))]
            (if (Character/isDefined ^long cp)
              cp
-             (recur skew)))))
+             (recur skew lower upper)))))
 
 (defn zipf-alphanumeric-codepoint
   "Generates a Zipfian-distributed long codepoint in the range 0-9a-zA-Z.
   Helpful when you'd like to generate keys that sometimes collide often, and
   also have them be easy to print."
-  ([]
+  (^long []
    (zipf-alphanumeric-codepoint zipf-default-skew))
-  ([^double skew]
+  (^long [^double skew]
    (let [i (zipf skew 62)]
      (condp <= i
        ; 36-61 map to uppercase (65-90)
@@ -389,7 +399,10 @@
 
 (defn str
   "Generates random strings. Takes two functions generating random longs: one
-  for the length, and the second for a codepoint."
+  for the length, and the second for a codepoint. The codepoint generator
+  should, if it emits raw surrogate codepoints, also take two arguments:
+  [lower, upper), both longs, defining a range of codepoints to generate. We
+  use this to always generate valid unicode with surrogate pairs."
   (^String []
            (str (partial zipf 64)))
   (^String [length-fn]
@@ -397,11 +410,44 @@
   (^String [length-fn codepoint-fn]
            (let [n (c/long (length-fn))
                  sb (StringBuilder. n)]
-             (loop [i n]
-               (if (<= i 0)
+             (loop [i     n
+                    ; Did we just emit a high surrogate?
+                    high? false]
+               (cond
+                 ; Done
+                 (<= i 0)
                  (c/str sb)
-                 (do (.appendCodePoint sb (c/long (codepoint-fn)))
-                     (recur (dec i))))))))
+
+                 ; We just emitted a high surrogate; we need to add a low one.
+                 high?
+                 (do (.appendCodePoint
+                       sb (c/long
+                            (codepoint-fn
+                              (unchecked-int Character/MIN_LOW_SURROGATE)
+                              (inc (unchecked-int Character/MAX_LOW_SURROGATE)))))
+                     (recur (dec i) false))
+
+                 :else
+                 (let [c (c/long (codepoint-fn))]
+                   (if (Character/isBmpCodePoint c)
+                     (let [ch (char c)]
+                       (cond
+                         ; Bare lower surrogate; skip
+                         (Character/isLowSurrogate ch)
+                         (recur i false)
+
+                         ; High surrogate
+                         (Character/isHighSurrogate ch)
+                         (do (.appendCodePoint sb c)
+                              (recur i true))
+
+                         ; Plain old BMP
+                         :else
+                         (do (.appendCodePoint sb c)
+                             (recur (dec i) false))))
+                     ; Outside BMP
+                     (do (.appendCodePoint sb c)
+                         (recur (dec i) false)))))))))
 
 ; Choosing things from collections
 
