@@ -359,6 +359,34 @@
   (testing "nil passthrough"
     (is (nil? (gen/each-process nil)))))
 
+(deftest each-node-test
+  (testing "nil passthrough"
+    (is (nil? (gen/each-node nil))))
+
+  (testing "basic"
+    (let [test  gen.test/default-test
+          nodes (:nodes test)
+          n     (count nodes)]
+      (is (= [; Node n1 gets 0, 2, 4
+              ; Node n2 gets 1, 3
+              ; First burst: n1 does a,b,c, n2 does a,b
+              [0 0 :a]
+              [0 2 :b]
+              [0 3 :a]
+              [0 4 :c]
+              [0 1 :b]
+              ; Second burst: n1 does d, n2 does c,d
+              [10 1 :c]
+              [10 4 :d]
+              [10 3 :d]]
+             ; Each node now gets to evaluate [a b c d] independently.
+             (->> (gen/each-node [{:f :a} {:f :b} {:f :c} {:f :d}])
+                  gen/clients
+                  ; We're going to do 2n+1 threads, so they can actually
+                  ; evaluate a and b simultaneously on each node--maybe c too.
+                  (gen.test/perfect test (gen.test/n+nemesis-context (inc (* 2 n))))
+                  (map (juxt :time :process :f))))))))
+
 (deftest stagger-test
   (testing "nil passthrough"
     (is (nil? (gen/stagger 1 nil))))

@@ -1210,6 +1210,96 @@
   (when gen
     (EachProcess. gen (promise) {} {})))
 
+(declare each-node-init)
+
+(defrecord EachNode
+  [; A fresh copy of the generator we start with for each node
+   fresh-gen
+   ; A vector of context filters for each node, lazily initialized.
+   context-filters
+   ; A vector of generators, one for each node, lazily initialized.
+   gens]
+  Generator
+  (op [this test ctx]
+    (let [^EachNode this  (each-node-init this test ctx)
+          context-filters (.context-filters this)
+          gens            (.gens this)
+          ; Ask each node for an operation
+          {:keys [i op gen'] :as soonest}
+          (->> (range (count gens))
+               (keep (fn [i]
+                       (let [context-filter (nth context-filters i)
+                             gen            (nth gens i)
+                             ; Construct a context for this node
+                             ctx (context-filter ctx)]
+                         ; Generate an op
+                         (when-let [[op gen'] (op gen test ctx)]
+                           {:i       i
+                            :op      op
+                            :gen'    gen'}))))
+               (reduce soonest-op-map nil))]
+      (cond ; A node has an operation
+            soonest [op (EachNode. fresh-gen
+                                   context-filters
+                                   (assoc gens i gen'))]
+
+            ; Some thread is busy; we can't tell what to do just yet
+            (not= (context/free-thread-count ctx)
+                  (context/all-thread-count ctx))
+            [:pending this]
+
+            ; Every thread is exhausted
+            :else
+            nil)))
+
+    (update [this test ctx event]
+      (let [^EachNode this  (each-node-init this test ctx)
+            context-filters (.context-filters this)
+            gens            (.gens this)
+            process         (:process event)
+            ; What node is this about?
+            i               (mod process (count gens))
+            gen             (nth gens i)
+            ; Make a new context for that node and propagate the update
+            ctx             ((context-filters i) ctx)
+            gen'            (update gen test ctx event)]
+        (EachNode. fresh-gen context-filters (assoc gens i gen')))))
+
+(defn each-node-init
+  "Lazily initializes some state for an EachNode."
+  [^EachNode en test ctx]
+  (if (.gens en)
+    ; Already initialized
+    en
+    (let [nodes (:nodes test)
+          n     (count nodes)
+          ; One context filter for each node
+          context-filters (mapv (fn make-thread-filter [i]
+                                  (context/make-thread-filter
+                                    (fn pred [thread]
+                                      (and (integer? thread)
+                                           (= i (mod thread n))))
+                                    ctx))
+                                (range n))
+          ; One gen for each node
+          gens (vec (c/repeat n (.fresh-gen en)))]
+      (EachNode. nil ; Don't need fresh-gen any more
+                 context-filters
+                 gens))))
+
+(defn each-node
+  "Takes a generator. Constructs a generator which maintains independent copies
+  of that generator for every node. Each of them sees only the threads bound to
+  a specific node. Processes are mapped to nodes in the usual way:
+
+      (nth nodes (mod thread (count nodes)))
+
+  Updates are propagated to the generator for the node which emitted the
+  operation."
+  [gen]
+  (when gen
+    (EachNode. gen nil nil)))
+
 (defrecord Reserve [ranges all-ranges context-filters gens]
   ; ranges is a collection of sets of threads engaged in each generator.
   ; all-ranges is the union of all ranges.
