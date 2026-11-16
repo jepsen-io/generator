@@ -793,3 +793,18 @@
               (gen/track :max -1 (fn [m op] (max m (:value op))))
               gen.test/perfect*
               (map (juxt :type :value :max))))))
+
+(deftest with-node-test
+  (is (= [
+          {:time 0, :process :nemesis, :type :info, :f :fault, :value 0}
+          {:time 0, :process 1, :type :invoke, :f :write, :value :x, :node "n2"}
+          {:time 0, :process 2, :type :invoke, :f :write, :value :y, :node "n1"}
+          {:time 0, :process 0, :type :invoke, :f :write, :value :z, :node "n1"}
+          ]
+         (->> [:x :y :z]
+              (map (fn [x] {:f :write, :value x}))
+              (gen/nemesis [{:type :info, :f :fault, :value 0}])
+              (gen/with-node)
+              ; Run with one extra node, to force wraparound
+              (gen.test/perfect* gen.test/default-test (gen.test/n+nemesis-context 3))
+              (take 4)))))

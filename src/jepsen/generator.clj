@@ -1300,6 +1300,34 @@
   (when gen
     (EachNode. gen nil nil)))
 
+(defrecord WithNode [nodes gen]
+  Generator
+  (op [this test ctx]
+    (let [nodes (or nodes (:nodes test))]
+      (when-let [[op gen'] (op gen test ctx)]
+        (if (identical? :pending op)
+          [op (WithNode. nodes gen')]
+          (let [p   (:process op)
+                op' (if (integer? p)
+                      (assoc op :node (nth nodes (mod p (count nodes))))
+                      op)]
+            [op' (WithNode. nodes gen')])))))
+
+  (update [this test ctx event]
+    (let [nodes (or nodes (:node test))]
+      (WithNode. nodes (update gen test ctx event)))))
+
+(defn with-node
+  "Wraps a generator so that every invoke it produces with an integer :process
+  also has a node attached, like {:type :invoke, :process 2, :node \"n3\",
+  ...}. Usually you can figure out the node number easily from the process: for
+  n processes, it's (mod process n). However, with roles restricting the test
+  map, or weird node names, it can be more convenient to have the node stamped
+  on each invocation. This adds a lot of strings to the history, which costs
+  memory, but it can make debugging easier."
+  [gen]
+  (WithNode. nil gen))
+
 (defrecord Reserve [ranges all-ranges context-filters gens]
   ; ranges is a collection of sets of threads engaged in each generator.
   ; all-ranges is the union of all ranges.
