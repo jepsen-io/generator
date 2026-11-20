@@ -808,3 +808,22 @@
               ; Run with one extra node, to force wraparound
               (gen.test/perfect* gen.test/default-test (gen.test/n+nemesis-context 3))
               (take 4)))))
+
+(deftest with-node-until-ok-test
+  ; A simple composite example of a repeating read on each node
+  (let [flaky (fn [ctx op]
+                (assoc op :type (rand/branch :ok :fail :info)))]
+    (is (= [
+            {:time 10, :type :fail, :process 1, :f :read, :value nil}
+            {:time 10, :type :fail, :process 0, :f :read, :value nil}
+            {:time 20, :type :info, :process 0, :f :read, :value nil}
+            {:time 20, :type :info, :process 1, :f :read, :value nil}
+            {:time 30, :type :ok, :process 3, :f :read, :value nil}
+            {:time 30, :type :ok, :process 2, :f :read, :value nil}
+            ]
+           (->> {:f :read}
+                (gen/repeat)
+                (gen/until-ok)
+                (gen/each-node)
+                (gen.test/imperfect)
+                (remove h/invoke?))))))
