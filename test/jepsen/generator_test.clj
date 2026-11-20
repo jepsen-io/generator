@@ -1,6 +1,9 @@
 (ns jepsen.generator-test
   (:require [jepsen.generator [context :as ctx]
-                              [test :as gen.test]]
+                              [test :as gen.test
+                               :refer [default-context
+                                       default-test
+                                       n+nemesis-context]]]
             [jepsen [generator :as gen]
                     [history :as h]
                     [random :as rand]]
@@ -814,16 +817,25 @@
   (let [flaky (fn [ctx op]
                 (assoc op :type (rand/branch :ok :fail :info)))]
     (is (= [
-            {:time 10, :type :fail, :process 1, :f :read, :value nil}
             {:time 10, :type :fail, :process 0, :f :read, :value nil}
-            {:time 20, :type :info, :process 0, :f :read, :value nil}
-            {:time 20, :type :info, :process 1, :f :read, :value nil}
-            {:time 30, :type :ok, :process 3, :f :read, :value nil}
-            {:time 30, :type :ok, :process 2, :f :read, :value nil}
+            {:time 20, :type :fail, :process 2, :f :read, :value nil}
+            {:time 30, :type :fail, :process 3, :f :read, :value nil}
+            {:time 40, :type :fail, :process 1, :f :read, :value nil}
+            {:time 50, :type :info, :process 0, :f :read, :value nil}
+            {:time 60, :type :info, :process 1, :f :read, :value nil}
+            {:time 70, :type :info, :process 2, :f :read, :value nil}
+            {:time 80, :type :ok, :process 4, :f :read, :value nil}
+            {:time 90, :type :info, :process 3, :f :read, :value nil}
+            ; process 7 fires off juuuust as process 5's ok read succeeds, so
+            ; we do get a double ok here
+            {:time 100, :type :ok, :process 5, :f :read, :value nil}
+            {:time 110, :type :ok, :process 7, :f :read, :value nil}
             ]
            (->> {:f :read}
                 (gen/repeat)
                 (gen/until-ok)
                 (gen/each-node)
-                (gen.test/imperfect)
+                (gen/delay 20/1000000000)
+                ; Run with extra processes
+                (gen.test/imperfect (n+nemesis-context 4))
                 (remove h/invoke?))))))
