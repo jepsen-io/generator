@@ -1,5 +1,8 @@
 (ns jepsen.generator-test
-  (:require [jepsen.generator [context :as ctx]
+  (:require [hegel-clj [core :as hc]
+                       [generator :as hg]
+                       [clojure-test :refer [with]]]
+            [jepsen.generator [context :as ctx]
                               [test :as gen.test
                                :refer [default-context
                                        default-test
@@ -388,7 +391,28 @@
                   ; We're going to do 2n+1 threads, so they can actually
                   ; evaluate a and b simultaneously on each node--maybe c too.
                   (gen.test/perfect test (gen.test/n+nemesis-context (inc (* 2 n))))
-                  (map (juxt :time :process :f))))))))
+                  (map (juxt :time :process :f)))))))
+
+  (testing "updates pass through to correct generators"
+    (let [; Takes a set of active processes, and ensures that updates are always for one of those processes.
+          tracker (fn tracker [in-flight]
+                    (reify gen/Generator
+                      (op [this test ctx]
+                        (let [op (gen/fill-in-op {:f :hi} ctx)]
+                          (if (= op :pending)
+                            [op this]
+                            [op (tracker (conj in-flight (:process op)))])))
+
+                      (update [this test ctx op]
+                        (let [p (:process op)]
+                          (is (contains? in-flight p))
+                          (if (= :invoke (:type op))
+                            this
+                            (tracker (disj in-flight p)))))))
+          h (->> (gen/each-node (tracker #{}))
+                 gen/clients
+                 (gen/limit 150)
+                 (gen.test/perfect default-test (n+nemesis-context 5)))])))
 
 (deftest stagger-test
   (testing "nil passthrough"
@@ -814,28 +838,43 @@
 
 (deftest with-node-until-ok-test
   ; A simple composite example of a repeating read on each node
-  (let [flaky (fn [ctx op]
-                (assoc op :type (rand/branch :ok :fail :info)))]
-    (is (= [
-            {:time 10, :type :fail, :process 0, :f :read, :value nil}
-            {:time 20, :type :fail, :process 2, :f :read, :value nil}
-            {:time 30, :type :fail, :process 3, :f :read, :value nil}
-            {:time 40, :type :fail, :process 1, :f :read, :value nil}
-            {:time 50, :type :info, :process 0, :f :read, :value nil}
-            {:time 60, :type :info, :process 1, :f :read, :value nil}
-            {:time 70, :type :info, :process 2, :f :read, :value nil}
-            {:time 80, :type :ok, :process 4, :f :read, :value nil}
-            {:time 90, :type :info, :process 3, :f :read, :value nil}
-            ; process 7 fires off juuuust as process 5's ok read succeeds, so
-            ; we do get a double ok here
-            {:time 100, :type :ok, :process 5, :f :read, :value nil}
-            {:time 110, :type :ok, :process 7, :f :read, :value nil}
-            ]
-           (->> {:f :read}
-                (gen/repeat)
-                (gen/until-ok)
-                (gen/each-node)
-                (gen/delay 20/1000000000)
-                ; Run with extra processes
-                (gen.test/imperfect (n+nemesis-context 4))
-                (remove h/invoke?))))))
+  (is (= [
+          {:time 10, :type :fail, :process 0, :f :read, :value nil}
+          {:time 30, :type :fail, :process 1, :f :read, :value nil}
+          {:time 50, :type :fail, :process 3, :f :read, :value nil}
+          {:time 70, :type :info, :process 3, :f :read, :value nil}
+          {:time 90, :type :info, :process 1, :f :read, :value nil}
+          {:time 110, :type :info, :process 0, :f :read, :value nil}
+          ; Success on process 6, which is thread 1, which is node n2
+          {:time 130, :type :ok, :process 6, :f :read, :value nil}
+          {:time 150, :type :fail, :process 2, :f :read, :value nil}
+          {:time 170, :type :info, :process 2, :f :read, :value nil}
+          {:time 190, :type :fail, :process 4, :f :read, :value nil}
+          {:time 210, :type :info, :process 4, :f :read, :value nil}
+          ; Success on process 5, which is thread 0, which is node n1
+          {:time 230, :type :ok, :process 5, :f :read, :value nil}
+          ]
+         (->> {:f :read}
+              (gen/repeat)
+              (gen/until-ok)
+              (gen/each-node)
+              (gen/delay 20/1000000000)
+              ; Run with extra processes
+              (gen.test/imperfect (n+nemesis-context 5))
+              (remove h/invoke?)))))
+
+(deftest each-node-mod-test
+  ; Trying to find a bug where each-node produces ops with a process different
+  ; than the node we expected
+  (with {:test-cases 100}
+    [concurrency (hg/integer 1 5)
+     limit       (hg/integer 1 128)]
+    (hc/fprn)
+    (hc/fprn :concurrency concurrency :limit limit)
+    (is (sequential?
+          (->> {:f :read}
+               (gen/repeat)
+               (gen/each-node)
+               (gen/clients)
+               (gen/limit limit)
+               (gen.test/imperfect (n+nemesis-context concurrency)))))))

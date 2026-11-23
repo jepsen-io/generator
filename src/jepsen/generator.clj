@@ -376,7 +376,8 @@
   sequences, phases, etc., and they'll be evaluated only once prior ops have
   been consumed."
   (:refer-clojure :exclude [await concat cycle delay filter map repeat run! update])
-  (:require [bifurcan-clj [core :as b]]
+  (:require [bifurcan-clj [core :as b]
+                          [set :as bs]]
             [clojure [core :as c]
                      [datafy :refer [datafy]]
                      [set :as set]]
@@ -385,6 +386,7 @@
             [clojure.pprint :as pprint :refer [pprint]]
             [dom-top.core :refer [loopr]]
             [fipp.ednize :as fipp.ednize]
+            [hegel-clj.core :refer [fprn finfo]]
             [jepsen [history :as h]
                     [random :as rand]]
             [jepsen.generator [context :as context]
@@ -1239,9 +1241,21 @@
                             :gen'    gen'}))))
                (reduce soonest-op-map nil))]
       (cond ; A node has an operation
-            soonest [op (EachNode. fresh-gen
-                                   context-filters
-                                   (assoc gens i gen'))]
+            soonest
+            (let [p (:process op)
+                  t (process->thread ctx p)]
+              (when (and (integer? p)
+                         (not= i (mod t (count gens))))
+                (throw+
+                  {:type         :wrong-thread-for-node
+                   :op           op
+                   :process      p
+                   :thread       t
+                   :expected-mod i
+                   :actual-mod   (mod t (count gens))}))
+              [op (EachNode. fresh-gen
+                             context-filters
+                             (assoc gens i gen'))])
 
             ; Some thread is busy; we can't tell what to do just yet
             (not= (context/free-thread-count ctx)
@@ -1258,7 +1272,7 @@
             gens            (.gens this)
             process         (:process event)
             ; What node is this about?
-            i               (mod process (count gens))
+            i               (mod (process->thread ctx process) (count gens))
             gen             (nth gens i)
             ; Make a new context for that node and propagate the update
             ctx             ((context-filters i) ctx)
@@ -1309,7 +1323,9 @@
           [op (WithNode. nodes gen')]
           (let [p   (:process op)
                 op' (if (integer? p)
-                      (assoc op :node (nth nodes (mod p (count nodes))))
+                      (let [thread (process->thread ctx p)
+                            i      (mod thread (count nodes))]
+                        (assoc op :node (nth nodes i)))
                       op)]
             [op' (WithNode. nodes gen')])))))
 
@@ -1320,11 +1336,11 @@
 (defn with-node
   "Wraps a generator so that every invoke it produces with an integer :process
   also has a node attached, like {:type :invoke, :process 2, :node \"n3\",
-  ...}. Usually you can figure out the node number easily from the process: for
-  n processes, it's (mod process n). However, with roles restricting the test
-  map, or weird node names, it can be more convenient to have the node stamped
-  on each invocation. This adds a lot of strings to the history, which costs
-  memory, but it can make debugging easier."
+  ...}. Usually you can figure out the node number easily from the process:
+  with n nodes and n * m processes, it's (mod process n). However, with roles
+  restricting the test map, or weird node names, it can be more convenient to
+  have the node stamped on each invocation. This adds a lot of strings to the
+  history, which costs memory, but it can make debugging easier."
   [gen]
   (WithNode. nil gen))
 

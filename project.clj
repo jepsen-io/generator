@@ -10,7 +10,8 @@
                   :exclusions [org.clojure/clojure]]
                  [org.clj-commons/slingshot "0.13.0"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.12.5"]
-                                  [criterium "0.4.6"]]}}
+                                  [criterium "0.4.6"]
+                                  [com.aphyr/hegel-clj "0.1.1"]]}}
   :repl-options {:init-ns user}
   :test-selectors {:default (fn [m]
                               (not (:perf m)))
