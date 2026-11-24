@@ -81,7 +81,7 @@
             ctx        ctx]
        ;(binding [*print-length* 3] (prn :invoking :gen gen))
        (let [[invoke gen'] (gen/op gen test ctx)]
-         ; (prn :invoke invoke :in-flight in-flight)
+         (prn :invoke invoke :in-flight in-flight)
          (cond
            ; We're done
            (nil? invoke)
@@ -115,8 +115,9 @@
 
                ; For logs... you *might* want to see these so you can test
                ; logging, but log ops don't actually appear in the history, so
-               ; I think the thing to do is to silently drop them.
-               :log (recur ops in-flight gen' ctx)
+               ; I think the thing to do is to silently skip over them.
+               :log (recur ops in-flight gen'
+                           (ctx/free-thread ctx' (:time ctx') thread))
 
                ; Sleeps are weird: the thread is busy, but we don't put
                ; anything in the history.
@@ -124,7 +125,8 @@
                (let [complete (assoc invoke :time (+ (:time invoke)
                                                      (:value invoke)))
                      in-flight (sort-by :time (conj in-flight complete))]
-                 (recur ops in-flight gen' ctx'))))
+                 (recur ops in-flight gen'
+                        (ctx/free-thread ctx' (:time ctx') thread)))))
 
            ; We need to complete something before we can apply the next
            ; invocation.
