@@ -386,7 +386,7 @@
             [clojure.pprint :as pprint :refer [pprint]]
             [dom-top.core :refer [loopr]]
             [fipp.ednize :as fipp.ednize]
-            [hegel-clj.core :refer [fprn finfo]]
+            ;[hegel-clj.core :refer [fprn finfo]]
             [jepsen [history :as h]
                     [random :as rand]]
             [jepsen.generator [context :as context]
