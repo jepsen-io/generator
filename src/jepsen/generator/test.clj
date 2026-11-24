@@ -81,7 +81,7 @@
             ctx        ctx]
        ;(binding [*print-length* 3] (prn :invoking :gen gen))
        (let [[invoke gen'] (gen/op gen test ctx)]
-         (prn :invoke invoke :in-flight in-flight)
+         ; (prn :invoke invoke :in-flight in-flight)
          (cond
            ; We're done
            (nil? invoke)
